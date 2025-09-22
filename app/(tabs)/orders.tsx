@@ -1,295 +1,360 @@
 import React, { useState } from 'react';
-import { ScrollView, View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  TouchableOpacity, 
+  Alert,
+  Image
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useColorScheme } from 'react-native';
-import { Plus, Package, Clock, CircleCheck as CheckCircle, Truck, X } from 'lucide-react-native';
-import GlassCard from '@/components/GlassCard';
-import FloatingActionButton from '@/components/FloatingActionButton';
-import OrderStatusBadge from '@/components/OrderStatusBadge';
-import { useThemeStore } from '@/store/themeStore';
-import { useOrderStore, Order, OrderStatus } from '@/store/orderStore';
-import OrderFormModal from '@/components/OrderFormModal';
-
-const statusIcons = {
-  pending: Clock,
-  confirmed: CheckCircle,
-  packed: Package,
-  delivered: CheckCircle,
-  cancelled: X,
-};
+import { Trash2, Check, X, Eye } from 'lucide-react-native';
+import { useOrderStore } from '@/store/orderStore';
+import { generateOrderReceipt } from '@/utils/receiptGenerator';
 
 export default function Orders() {
-  const systemColorScheme = useColorScheme();
-  const { theme } = useThemeStore();
-  const { orders, updateOrderStatus } = useOrderStore();
-  
-  const activeTheme = theme === 'system' ? systemColorScheme : theme;
-  const isDark = activeTheme === 'dark';
+  const { orders, toggleItemDelivered, deleteOrder } = useOrderStore();
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
 
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState<OrderStatus | 'all'>('all');
+  const toggleOrderExpansion = (orderId: string) => {
+    const newExpanded = new Set(expandedOrders);
+    if (newExpanded.has(orderId)) {
+      newExpanded.delete(orderId);
+    } else {
+      newExpanded.add(orderId);
+    }
+    setExpandedOrders(newExpanded);
+  };
 
-  const filteredOrders = selectedStatus === 'all' 
-    ? orders 
-    : orders.filter(order => order.status === selectedStatus);
-
-  const handleStatusUpdate = (orderId: string, newStatus: OrderStatus) => {
+  const handleDeleteOrder = (orderId: string) => {
     Alert.alert(
-      'Update Order Status',
-      `Change status to ${newStatus}?`,
+      'Delete Order',
+      'Are you sure you want to delete this order?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Update',
-          onPress: () => updateOrderStatus(orderId, newStatus),
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteOrder(orderId),
         },
       ]
     );
   };
 
-  const styles = createStyles(isDark);
+  const handleToggleDelivered = (orderId: string, itemId: string) => {
+    toggleItemDelivered(orderId, itemId);
+  };
+
+  const handleGenerateReceipt = async (order: any) => {
+    try {
+      await generateOrderReceipt({
+        orderId: order.id,
+        customerName: order.customerName,
+        phoneNumber: order.phoneNumber,
+        items: order.items.filter((item: any) => !item.delivered),
+        total: order.items
+          .filter((item: any) => !item.delivered)
+          .reduce((sum: number, item: any) => sum + (item.unitPrice * item.quantity), 0),
+      });
+      Alert.alert('Success', 'Receipt generated successfully!');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to generate receipt');
+    }
+  };
+
+  const renderOrderItem = ({ item: order }: { item: any }) => {
+    const isExpanded = expandedOrders.has(order.id);
+    const undeliveredItems = order.items.filter((item: any) => !item.delivered);
+    const deliveredItems = order.items.filter((item: any) => item.delivered);
+
+    return (
+      <View style={styles.orderCard}>
+        <TouchableOpacity
+          style={styles.orderHeader}
+          onPress={() => toggleOrderExpansion(order.id)}
+        >
+          <View style={styles.orderInfo}>
+            <Text style={styles.customerName}>{order.customerName}</Text>
+            <Text style={styles.phoneNumber}>{order.phoneNumber}</Text>
+            <Text style={styles.orderCode}>Order: {order.orderCode}</Text>
+            <Text style={styles.orderDate}>
+              {new Date(order.createdAt).toLocaleDateString()}
+            </Text>
+          </View>
+          <View style={styles.orderSummary}>
+            <Text style={styles.itemCount}>
+              {order.items.length} item{order.items.length !== 1 ? 's' : ''}
+            </Text>
+            <Text style={styles.totalAmount}>Rs. {order.total.toFixed(2)}</Text>
+            {undeliveredItems.length > 0 && (
+              <TouchableOpacity
+                style={styles.receiptButton}
+                onPress={() => handleGenerateReceipt(order)}
+              >
+                <Eye size={16} color="#3b82f6" />
+                <Text style={styles.receiptButtonText}>Receipt</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={styles.orderDetails}>
+            {order.items.map((item: any) => (
+              <View key={item.id} style={styles.orderItemRow}>
+                <View style={styles.itemImageContainer}>
+                  {item.image ? (
+                    <Image source={{ uri: item.image }} style={styles.itemImage} />
+                  ) : (
+                    <View style={styles.itemImagePlaceholder}>
+                      <Text style={styles.itemImagePlaceholderText}>No Image</Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.itemDetails}>
+                  <Text style={styles.itemName}>{item.name}</Text>
+                  <Text style={styles.itemPrice}>
+                    Rs. {item.unitPrice.toFixed(2)} x {item.quantity} = Rs. {(item.unitPrice * item.quantity).toFixed(2)}
+                  </Text>
+                  <Text style={[
+                    styles.deliveryStatus,
+                    item.delivered ? styles.delivered : styles.pending
+                  ]}>
+                    {item.delivered ? 'Delivered' : 'Pending'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.toggleButton,
+                    item.delivered ? styles.deliveredButton : styles.pendingButton
+                  ]}
+                  onPress={() => handleToggleDelivered(order.id, item.id)}
+                >
+                  {item.delivered ? (
+                    <X size={20} color="#ffffff" />
+                  ) : (
+                    <Check size={20} color="#ffffff" />
+                  )}
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <View style={styles.orderActions}>
+              <TouchableOpacity
+                style={styles.deleteOrderButton}
+                onPress={() => handleDeleteOrder(order.id)}
+              >
+                <Trash2 size={16} color="#ffffff" />
+                <Text style={styles.deleteOrderButtonText}>Delete Order</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Orders</Text>
-        
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          style={styles.filterContainer}
-        >
-          {(['all', 'pending', 'confirmed', 'packed', 'delivered', 'cancelled'] as const).map((status) => (
-            <TouchableOpacity
-              key={status}
-              style={[
-                styles.filterButton,
-                selectedStatus === status && styles.filterButtonActive
-              ]}
-              onPress={() => setSelectedStatus(status)}
-            >
-              <Text style={[
-                styles.filterText,
-                selectedStatus === status && styles.filterTextActive
-              ]}>
-                {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {filteredOrders.map((order) => (
-          <GlassCard key={order.id} style={styles.orderCard} isDark={isDark}>
-            <View style={styles.orderHeader}>
-              <View style={styles.orderInfo}>
-                <Text style={styles.orderCustomer}>{order.customerName}</Text>
-                <Text style={styles.orderDate}>
-                  {new Date(order.createdAt).toLocaleDateString()}
-                </Text>
-              </View>
-              <View style={styles.orderMeta}>
-                <Text style={styles.orderTotal}>${order.total.toFixed(2)}</Text>
-                <OrderStatusBadge status={order.status} isDark={isDark} />
-              </View>
-            </View>
-
-            <View style={styles.orderItems}>
-              {order.items.map((item, index) => (
-                <Text key={index} style={styles.orderItem}>
-                  {item.quantity}x {item.productName}
-                </Text>
-              ))}
-            </View>
-
-            {order.notes && (
-              <View style={styles.notesContainer}>
-                <Text style={styles.notesLabel}>Notes:</Text>
-                <Text style={styles.notesText}>{order.notes}</Text>
-              </View>
-            )}
-
-            <View style={styles.orderActions}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {(['pending', 'confirmed', 'packed', 'delivered', 'cancelled'] as OrderStatus[])
-                  .filter(status => status !== order.status)
-                  .map((status) => {
-                    const Icon = statusIcons[status];
-                    return (
-                      <TouchableOpacity
-                        key={status}
-                        style={styles.statusButton}
-                        onPress={() => handleStatusUpdate(order.id, status)}
-                      >
-                        <Icon size={16} color="#06b6d4" />
-                        <Text style={styles.statusButtonText}>
-                          {status.charAt(0).toUpperCase() + status.slice(1)}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-              </ScrollView>
-            </View>
-          </GlassCard>
-        ))}
-
-        {filteredOrders.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Package size={60} color={isDark ? '#94a3b8' : '#64748b'} />
-            <Text style={styles.emptyText}>
-              {selectedStatus === 'all' ? 'No orders yet' : `No ${selectedStatus} orders`}
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.bottomPadding} />
-      </ScrollView>
-
-      <FloatingActionButton
-        icon={Plus}
-        onPress={() => setShowAddModal(true)}
-        isDark={isDark}
-      />
-
-      <OrderFormModal
-        visible={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        isDark={isDark}
-      />
+      <Text style={styles.title}>Customer Orders</Text>
+      
+      {orders.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>No orders yet</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={orders}
+          renderItem={renderOrderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-const createStyles = (isDark: boolean) => StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: isDark ? '#0f172a' : '#f8fafc',
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 15,
+    backgroundColor: '#f8fafc',
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '700',
-    color: isDark ? '#ffffff' : '#0f172a',
-    marginBottom: 20,
+    color: '#1f2937',
+    textAlign: 'center',
+    marginVertical: 20,
   },
-  filterContainer: {
-    marginBottom: 10,
-  },
-  filterButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: isDark ? 'rgba(55, 65, 81, 0.5)' : 'rgba(229, 231, 235, 0.5)',
-    marginRight: 10,
-  },
-  filterButtonActive: {
-    backgroundColor: '#06b6d4',
-  },
-  filterText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: isDark ? '#94a3b8' : '#64748b',
-  },
-  filterTextActive: {
-    color: '#ffffff',
-  },
-  scrollView: {
-    flex: 1,
-    paddingHorizontal: 20,
+  listContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 100,
   },
   orderCard: {
-    padding: 20,
-    marginBottom: 15,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   orderHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 15,
+    padding: 16,
   },
   orderInfo: {
     flex: 1,
   },
-  orderCustomer: {
+  customerName: {
     fontSize: 18,
     fontWeight: '600',
-    color: isDark ? '#ffffff' : '#0f172a',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  phoneNumber: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  orderCode: {
+    fontSize: 14,
+    color: '#3b82f6',
+    fontWeight: '500',
     marginBottom: 4,
   },
   orderDate: {
-    fontSize: 14,
-    color: isDark ? '#94a3b8' : '#64748b',
+    fontSize: 12,
+    color: '#9ca3af',
   },
-  orderMeta: {
+  orderSummary: {
     alignItems: 'flex-end',
   },
-  orderTotal: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: isDark ? '#ffffff' : '#0f172a',
-    marginBottom: 8,
-  },
-  orderItems: {
-    marginBottom: 15,
-  },
-  orderItem: {
+  itemCount: {
     fontSize: 14,
-    color: isDark ? '#94a3b8' : '#64748b',
-    marginBottom: 2,
-  },
-  notesContainer: {
-    marginBottom: 15,
-    padding: 12,
-    backgroundColor: isDark ? 'rgba(55, 65, 81, 0.3)' : 'rgba(229, 231, 235, 0.3)',
-    borderRadius: 8,
-  },
-  notesLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#06b6d4',
+    color: '#6b7280',
     marginBottom: 4,
   },
-  notesText: {
-    fontSize: 14,
-    color: isDark ? '#94a3b8' : '#64748b',
+  totalAmount: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 8,
   },
-  orderActions: {
-    borderTopWidth: 1,
-    borderTopColor: isDark ? 'rgba(55, 65, 81, 0.3)' : 'rgba(229, 231, 235, 0.3)',
-    paddingTop: 15,
-  },
-  statusButton: {
+  receiptButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#eff6ff',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 15,
-    backgroundColor: isDark ? 'rgba(55, 65, 81, 0.5)' : 'rgba(229, 231, 235, 0.5)',
-    marginRight: 10,
+    borderRadius: 6,
   },
-  statusButtonText: {
+  receiptButtonText: {
+    fontSize: 12,
+    color: '#3b82f6',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  orderDetails: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    padding: 16,
+  },
+  orderItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  itemImageContainer: {
+    marginRight: 12,
+  },
+  itemImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+  },
+  itemImagePlaceholder: {
+    width: 50,
+    height: 50,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  itemImagePlaceholderText: {
+    fontSize: 10,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  itemDetails: {
+    flex: 1,
+  },
+  itemName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  itemPrice: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  deliveryStatus: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#06b6d4',
-    marginLeft: 4,
+  },
+  delivered: {
+    color: '#10b981',
+  },
+  pending: {
+    color: '#f59e0b',
+  },
+  toggleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deliveredButton: {
+    backgroundColor: '#ef4444',
+  },
+  pendingButton: {
+    backgroundColor: '#10b981',
+  },
+  orderActions: {
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  deleteOrderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  deleteOrderButtonText: {
+    color: '#ffffff',
+    fontWeight: '500',
+    marginLeft: 8,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
   },
   emptyText: {
     fontSize: 18,
-    color: isDark ? '#94a3b8' : '#64748b',
-    marginTop: 20,
-  },
-  bottomPadding: {
-    height: 100,
+    color: '#6b7280',
   },
 });
